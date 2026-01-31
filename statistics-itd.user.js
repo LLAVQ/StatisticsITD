@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Statistics ITD (StatisticsИТД)
 // @namespace    https://github.com/LLAVQ/StatisticsITD
-// @version      1.1.0
+// @version      1.1.1
 // @description  Show account stats with interactive charts on итд.com profile pages
 // @author       LLAVQ
 // @license      GPL-3.0-or-later
@@ -11,7 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
-// @run-at       document-idle
+// @run-at       document-end
 // ==/UserScript==
 
 /*
@@ -22,14 +22,6 @@
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 (function () {
@@ -40,31 +32,34 @@
     const PANEL_VISIBLE_KEY = 'StatisticsITD_panelVisible';
     const PANEL_POS_KEY = 'StatisticsITD_panelPos';
 
+    // --- Core Logic: Find the User ---
     function getUsername() {
         const path = location.pathname.replace(/^\/+|\/+$/g, '');
         const segments = path.split('/');
         
-        // Priority 1: URL structure
-        for (let i = 0; i < segments.length; i++) {
-            if (['profile', 'user', 'u'].includes(segments[i]) && segments[i + 1]) {
-                return segments[i + 1].replace(/^@/, '');
-            }
-            if (segments[i].startsWith('@')) return segments[i].slice(1);
-        }
+        // 1. Check URL for @username or /profile/username
+        const userMatch = segments.find(s => s.startsWith('@'));
+        if (userMatch) return userMatch.slice(1);
 
-        // Priority 2: DOM Meta tags
-        const meta = document.querySelector('meta[property="profile:username"], meta[name="username"]');
-        if (meta && meta.content) return meta.content.trim();
+        const profileIdx = segments.findIndex(s => s === 'profile' || s === 'user' || s === 'u');
+        if (profileIdx !== -1 && segments[profileIdx + 1]) return segments[profileIdx + 1];
+
+        // 2. Fallback: Search the DOM for a username handle
+        const headerHandle = document.querySelector('h1, h2, .username, [data-username]');
+        if (headerHandle && headerHandle.innerText.includes('@')) {
+            return headerHandle.innerText.split('@')[1].trim().split(' ')[0];
+        }
 
         return null;
     }
 
+    // --- API Interactions ---
     async function api(path) {
         const r = await fetch(BASE + path, { 
             credentials: 'include', 
             headers: { 'Accept': 'application/json' } 
         });
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
         return data?.data ?? data;
     }
@@ -74,110 +69,69 @@
     }
 
     async function getPosts(username, limit = 50) {
-        try {
-            const data = await api(`/api/posts/user/${encodeURIComponent(username)}?limit=${limit}&sort=new`);
-            return data?.posts ?? [];
-        } catch (e) {
-            return [];
-        }
+        const data = await api(`/api/posts/user/${encodeURIComponent(username)}?limit=${limit}&sort=new`);
+        return data?.posts ?? [];
     }
 
+    // --- Storage & Snapshots ---
     function getSnapshots() {
-        try {
-            const raw = GM_getValue(STORAGE_KEY, "{}");
-            return JSON.parse(raw);
-        } catch { return {}; }
+        try { return JSON.parse(GM_getValue(STORAGE_KEY, "{}")); } catch { return {}; }
     }
 
-    function saveSnapshot(username, snapshot) {
+    function saveSnapshot(username, stats) {
         const all = getSnapshots();
         if (!all[username]) all[username] = [];
-        all[username].unshift({ ...snapshot, date: new Date().toISOString() });
-        all[username] = all[username].slice(0, 30);
+        all[username].unshift({ 
+            followersCount: stats.profile?.followersCount || 0,
+            totalLikes: stats.totalLikes,
+            date: new Date().toISOString() 
+        });
         GM_setValue(STORAGE_KEY, JSON.stringify(all));
+        alert('Snapshot saved! Growth percentages will appear on your next visit.');
     }
 
-    function getLastSnapshot(username) {
-        const all = getSnapshots();
-        const list = all[username];
-        return list && list.length ? list[0] : null;
-    }
-
+    // --- UI Rendering ---
     function aggregate(profile, posts) {
-        let totalLikes = 0, totalViews = 0, totalComments = 0, totalReposts = 0;
-        const byViews = [];
+        let l = 0, v = 0, c = 0, r = 0;
         posts.forEach(p => {
-            totalLikes += (p.likesCount || 0);
-            totalViews += (p.viewsCount || 0);
-            totalComments += (p.commentsCount || 0);
-            totalReposts += (p.repostsCount || 0);
-            byViews.push({
-                content: (p.content || '').slice(0, 40),
-                views: p.viewsCount || 0,
-                likes: p.likesCount || 0
-            });
+            l += (p.likesCount || 0);
+            v += (p.viewsCount || 0);
+            c += (p.commentsCount || 0);
+            r += (p.repostsCount || 0);
         });
-        byViews.sort((a, b) => b.views - a.views);
-        const avgViews = posts.length ? Math.round(totalViews / posts.length) : 0;
-        const er = totalViews > 0 ? ((totalLikes + totalComments + totalReposts) / totalViews * 100).toFixed(2) + '%' : '0%';
-
-        return { profile, totalLikes, totalViews, totalComments, totalReposts, postCount: posts.length, avgViews, engagementRate: er, byViews };
+        const er = v > 0 ? ((l + c + r) / v * 100).toFixed(2) + '%' : '0%';
+        return { profile, totalLikes: l, totalViews: v, totalComments: c, totalReposts: r, postCount: posts.length, engagementRate: er };
     }
 
-    function growth(curr, last) {
-        if (!last) return null;
-        const calc = (c, l) => l === 0 ? 0 : Math.round(((c - l) / l) * 100);
-        return {
-            followers: calc(curr.followersCount, last.followersCount),
-            totalLikes: calc(curr.totalLikes, last.totalLikes),
-            date: last.date
-        };
-    }
-
-    function createToggleButton(wrap) {
-        const btn = document.createElement('button');
-        btn.innerHTML = '📊';
-        Object.assign(btn.style, {
-            position: 'fixed', bottom: '20px', right: '20px', zIndex: '999999',
-            width: '45px', height: '45px', borderRadius: '50%', border: 'none',
-            background: '#3b82f6', color: 'white', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.4)'
-        });
-        btn.onclick = () => {
-            const isVis = wrap.style.display !== 'none';
-            wrap.style.display = isVis ? 'none' : 'block';
-            GM_setValue(PANEL_VISIBLE_KEY, !isVis);
-        };
-        document.body.appendChild(btn);
-    }
-
-    function createPanel() {
+    function createUI() {
         const wrap = document.createElement('div');
-        const savedPos = JSON.parse(GM_getValue(PANEL_POS_KEY, '{"x":20,"y":20}'));
+        const pos = JSON.parse(GM_getValue(PANEL_POS_KEY, '{"x":20,"y":80}'));
         
         Object.assign(wrap.style, {
-            position: 'fixed', left: savedPos.x + 'px', top: savedPos.y + 'px',
-            width: '380px', maxHeight: '80vh', overflowY: 'auto', zIndex: '999998',
-            background: '#1e293b', color: '#f1f5f9', borderRadius: '12px',
-            boxShadow: '0 10px 25px rgba(0,0,0,0.5)', border: '1px solid #334155',
-            display: GM_getValue(PANEL_VISIBLE_KEY, true) ? 'block' : 'none',
-            fontFamily: 'sans-serif'
+            position: 'fixed', left: pos.x + 'px', top: pos.y + 'px',
+            width: '350px', zIndex: '999999', background: '#111827', color: '#f3f4f6',
+            borderRadius: '12px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+            border: '1px solid #374151', fontFamily: 'system-ui, sans-serif',
+            display: GM_getValue(PANEL_VISIBLE_KEY, true) ? 'block' : 'none'
         });
 
         const header = document.createElement('div');
-        header.innerHTML = '<div style="padding:12px; cursor:move; background:#0f172a; border-radius:12px 12px 0 0; font-weight:bold">📈 Statistics ITD</div>';
-        
-        // Simple Drag Logic
+        header.innerHTML = `<div style="padding:12px; cursor:move; background:#1f2937; border-radius:12px 12px 0 0; font-weight:bold; display:flex; justify-content:space-between">
+            <span>📈 Statistics ITD</span>
+            <span id="itdClose" style="cursor:pointer; opacity:0.5">×</span>
+        </div>`;
+
+        // Drag Handler
         header.onmousedown = (e) => {
-            let shiftX = e.clientX - wrap.getBoundingClientRect().left;
-            let shiftY = e.clientY - wrap.getBoundingClientRect().top;
-            function moveAt(pageX, pageY) {
-                wrap.style.left = pageX - shiftX + 'px';
-                wrap.style.top = pageY - shiftY + 'px';
-            }
-            function onMouseMove(e) { moveAt(e.pageX, e.pageY); }
-            document.addEventListener('mousemove', onMouseMove);
+            let sx = e.clientX - wrap.getBoundingClientRect().left;
+            let sy = e.clientY - wrap.getBoundingClientRect().top;
+            const move = (me) => {
+                wrap.style.left = me.pageX - sx + 'px';
+                wrap.style.top = me.pageY - sy + 'px';
+            };
+            document.addEventListener('mousemove', move);
             document.onmouseup = () => {
-                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mousemove', move);
                 GM_setValue(PANEL_POS_KEY, JSON.stringify({x: parseInt(wrap.style.left), y: parseInt(wrap.style.top)}));
                 document.onmouseup = null;
             };
@@ -185,95 +139,92 @@
 
         const body = document.createElement('div');
         body.style.padding = '15px';
-        body.innerHTML = 'Detecting profile...';
-
         wrap.appendChild(header);
         wrap.appendChild(body);
         document.body.appendChild(wrap);
-        
-        createToggleButton(wrap);
+
+        // Toggle Button
+        const toggle = document.createElement('button');
+        toggle.innerHTML = '📊';
+        Object.assign(toggle.style, {
+            position: 'fixed', bottom: '20px', right: '20px', zIndex: '1000000',
+            width: '48px', height: '48px', borderRadius: '50%', border: 'none',
+            background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '20px'
+        });
+        toggle.onclick = () => {
+            const isVisible = wrap.style.display !== 'none';
+            wrap.style.display = isVisible ? 'none' : 'block';
+            GM_setValue(PANEL_VISIBLE_KEY, !isVisible);
+        };
+        document.body.appendChild(toggle);
+
         return body;
     }
 
-    function drawChart(canvas, stats) {
-        const ctx = canvas.getContext('2d');
-        const data = [stats.totalLikes, stats.totalViews, stats.totalComments];
-        const labels = ['Likes', 'Views', 'Comm'];
-        const colors = ['#fbbf24', '#60a5fa', '#4ade80'];
-        
-        const max = Math.max(...data, 1);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        data.forEach((v, i) => {
-            const barH = (v / max) * 80;
-            ctx.fillStyle = colors[i];
-            ctx.fillRect(40 + i * 100, 100 - barH, 40, barH);
-            ctx.fillStyle = '#94a3b8';
-            ctx.fillText(labels[i], 40 + i * 100, 115);
-        });
-    }
-
     async function load(username, container) {
-        container.innerHTML = 'Loading data...';
+        container.innerHTML = '<div style="color:#9ca3af">Fetching data for @'+username+'...</div>';
         try {
             const [profile, posts] = await Promise.all([getProfile(username), getPosts(username)]);
             const stats = aggregate(profile, posts);
-            const last = getLastSnapshot(username);
-            const g = growth(stats.profile, last);
+            const snapshots = getSnapshots()[username] || [];
+            const last = snapshots[0];
+
+            let growthHtml = '';
+            if (last) {
+                const diff = stats.profile.followersCount - last.followersCount;
+                const color = diff >= 0 ? '#10b981' : '#ef4444';
+                growthHtml = `<span style="color:${color}; font-size:11px; margin-left:8px">${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}</span>`;
+            }
 
             container.innerHTML = `
                 <div style="margin-bottom:15px">
-                    <div style="font-size:18px; color:#3b82f6">@${username}</div>
-                    <div style="font-size:12px; opacity:0.7">Followers: ${stats.profile.followersCount}</div>
+                    <div style="font-size:18px; font-weight:bold; color:#60a5fa">@${username}</div>
+                    <div style="font-size:13px; color:#9ca3af">Followers: ${profile.followersCount.toLocaleString()}${growthHtml}</div>
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px">
-                    <div style="background:#334155; padding:10px; border-radius:8px">
-                        <small>Total Likes</small><br><b>${stats.totalLikes}</b>
-                        ${g ? `<br><small style="color:${g.totalLikes>=0?'#4ade80':'#f87171'}">${g.totalLikes}%</small>` : ''}
+                    <div style="background:#1f2937; padding:10px; border-radius:8px; border:1px solid #374151">
+                        <div style="font-size:11px; color:#9ca3af; text-transform:uppercase">Avg Views</div>
+                        <div style="font-size:16px; font-weight:bold">${Math.round(stats.totalViews / (stats.postCount || 1)).toLocaleString()}</div>
                     </div>
-                    <div style="background:#334155; padding:10px; border-radius:8px">
-                        <small>Eng. Rate</small><br><b>${stats.engagementRate}</b>
+                    <div style="background:#1f2937; padding:10px; border-radius:8px; border:1px solid #374151">
+                        <div style="font-size:11px; color:#9ca3af; text-transform:uppercase">Eng. Rate</div>
+                        <div style="font-size:16px; font-weight:bold; color:#10b981">${stats.engagementRate}</div>
                     </div>
                 </div>
-                <canvas id="itdChart" width="340" height="120"></canvas>
-                <button id="itdSave" style="width:100%; margin-top:10px; padding:8px; background:#3b82f6; border:none; color:white; border-radius:5px; cursor:pointer">Save Growth Snapshot</button>
+                <div style="font-size:12px; color:#9ca3af; margin-bottom:5px">Sample: Last ${stats.postCount} posts</div>
+                <div style="background:#1f2937; padding:10px; border-radius:8px; font-size:13px">
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px"><span>Likes:</span> <b>${stats.totalLikes.toLocaleString()}</b></div>
+                    <div style="display:flex; justify-content:space-between; margin-bottom:4px"><span>Views:</span> <b>${stats.totalViews.toLocaleString()}</b></div>
+                    <div style="display:flex; justify-content:space-between"><span>Comments:</span> <b>${stats.totalComments.toLocaleString()}</b></div>
+                </div>
+                <button id="itdSnapBtn" style="width:100%; margin-top:15px; padding:10px; background:#2563eb; border:none; color:white; border-radius:6px; cursor:pointer; font-weight:600">Save Snapshot</button>
             `;
 
-            drawChart(document.getElementById('itdChart'), stats);
-            document.getElementById('itdSave').onclick = () => {
-                saveSnapshot(username, {
-                    followersCount: stats.profile.followersCount,
-                    totalLikes: stats.totalLikes
-                });
-                alert('Snapshot saved!');
-            };
+            document.getElementById('itdSnapBtn').onclick = () => saveSnapshot(username, stats);
 
         } catch (e) {
-            container.innerHTML = `<span style="color:#f87171">Error: Profile not found or API private.</span>`;
+            console.error(e);
+            container.innerHTML = `<div style="color:#ef4444; font-size:13px">Error loading stats. User may be private or API is down.</div>`;
         }
     }
 
-    // --- Initialization ---
-    let lastUrl = location.href;
-    const body = createPanel();
+    // --- Init & Watcher ---
+    const body = createUI();
+    let currentLoadedUser = null;
 
     function check() {
         const user = getUsername();
-        if (user) {
+        if (user && user !== currentLoadedUser) {
+            currentLoadedUser = user;
             load(user, body);
-        } else {
-            body.innerHTML = 'Navigate to a profile to see stats.';
+        } else if (!user) {
+            currentLoadedUser = null;
+            body.innerHTML = '<div style="color:#9ca3af; text-align:center; padding:20px">Visit a profile to see statistics.</div>';
         }
     }
 
-    // Handle SPA navigation
-    setInterval(() => {
-        if (location.href !== lastUrl) {
-            lastUrl = location.href;
-            check();
-        }
-    }, 2000);
-
+    // Check every 2 seconds for navigation changes (SPA)
+    setInterval(check, 2000);
     check();
 
 })();
