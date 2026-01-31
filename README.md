@@ -1,57 +1,60 @@
-# StatisticsИТД (Statistics ITD)
+# StatisticsITD (StatisticsИТД)
 
-Tampermonkey userscript for **итд.com** that shows detailed account statistics on any user profile page: likes, posts, views, reposts, engagement, growth, and management metrics in a **draggable floating panel** with interactive charts.
+A powerful Tampermonkey userscript for **итд.com** (xn--d1ah4a.com) that injects a comprehensive analytics dashboard into any user profile. Track engagement, monitor growth, and visualize post performance through a draggable, interactive interface.
 
-## Features
+---
 
-- **Floating draggable window** — drag by the header to move; hide/show via a separate toggle button
-- **Profile stats** — followers, following, posts count, account age
-- **Content stats** — total likes, views, comments, reposts (from recent posts)
-- **Interactive charts** — engagement breakdown (pie), post performance (bar), views rank
-- **Growth tracking** — compare with last saved snapshot (stored in localStorage)
-- **Post rank by views** — table of recent posts sorted by views
-- **Management metrics** — engagement rate, avg views per post, best/worst post, growth %
+## ✨ Features
 
-## Installation
+* **📊 Draggable Analytics Panel**: A sleek, dark-themed UI that follows you as you browse. Drag by the header to reposition and toggle visibility with a dedicated floating button.
+* **📈 Growth Tracking**: Save "Snapshots" of account data to calculate percentage growth in followers and engagement over time.
+* **📱 Content Deep-Dive**: Aggregates data from the last 50 posts, including:
+* **Engagement Rate (ER)** calculation.
+* **Management Metrics**: Average views per post and total interaction counts.
+* **Post Ranking**: A sortable table identifying your top-performing content by views.
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) (Chrome, Firefox, Edge).
-2. Open **statistics-itd.user.js** and copy its full content, or use Tampermonkey → Create new script → paste.
-3. Save. The script runs on `https://xn--d1ah4a.com/*` (итд.com).
 
-## Usage
+* **📉 Visual Charts**: Built-in canvas-based bar charts visualizing the distribution of Likes, Views, and Comments.
+* **🛠 SPA Compatibility**: Works seamlessly with Single Page Application navigation—stats update automatically as you switch profiles.
 
-1. Open any **user profile page** on итд.com (e.g. `https://xn--d1ah4a.com/profile/username`).
-2. A **toggle button** appears (e.g. bottom-right): click to show/hide the stats panel.
-3. The **stats panel** shows:
-   - Summary numbers (followers, posts, total likes/views/reposts/comments)
-   - Charts (engagement distribution, post views rank)
-   - Growth vs last snapshot (if you’ve opened the panel before)
-   - Post rank table (recent posts by views)
-4. **Drag** the panel by its header to reposition.
-5. **Save snapshot** to track growth over time (button in panel).
+---
 
-## API
+## 🚀 Installation
 
-The script uses the same public API as the site:
+1. **Install a Userscript Manager**: Download [Tampermonkey](https://www.tampermonkey.net/) for Chrome, Firefox, or Edge.
+2. **Create New Script**:
+* Open the Tampermonkey Dashboard.
+* Click the **"+" (Add)** tab.
+* Paste the code from `statistics-itd.user.js`.
 
-- `GET /api/users/{username}` — profile (followersCount, followingCount, postsCount, createdAt)
-- `GET /api/posts/user/{username}?limit=50&sort=new` — recent posts (likesCount, viewsCount, commentsCount, repostsCount)
 
-No auth required for viewing public profiles and posts.
+3. **Save**: Press `Ctrl+S` or click **File > Save**.
+4. **Visit**: Navigate to any profile on `итд.com` or `xn--d1ah4a.com`.
 
-## New repo
+---
 
-To use this as a separate repo named **StatisticsИТД**:
+## 📖 How It Works
 
-```bash
-cp -r StatisticsITD /path/to/StatisticsITD
-cd /path/to/StatisticsITD
-git init
-git add .
-git commit -m "Initial commit: Statistics ITD Tampermonkey script"
-# then create repo on GitHub/GitLab and push
-```
+The script interacts with the site's public API to gather data without requiring your login credentials:
 
-## License
+1. **Detection**: The script identifies the `@username` from the URL or page metadata.
+2. **Data Fetching**: It queries the `/api/users/` and `/api/posts/` endpoints.
+3. **Aggregation**: It calculates totals and averages across the fetched post sample.
+4. **Rendering**: Data is injected into the draggable floating panel.
 
-MIT
+---
+
+## 🛠 Usage
+
+1. **Open a Profile**: Go to any user page (e.g., `https://итд.com/@username`).
+2. **Toggle Stats**: Click the floating 📊 button in the bottom-right corner to open the panel.
+3. **Analyze Growth**: Click **"Save Snapshot"**. The next time you visit, the script will show green/red percentage indicators comparing current stats to your saved data.
+4. **Reposition**: Click and hold the header to move the window anywhere on your screen.
+
+---
+
+## 📜 License
+
+This project is licensed under the **GNU GPLv3** - see the [LICENSE](https://www.gnu.org/licenses/gpl-3.0) file for details.
+
+> **Note**: This script is for educational and personal analytical use. It uses public API endpoints provided by the platform.
