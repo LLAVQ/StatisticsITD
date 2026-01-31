@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Statistics ITD (StatisticsИТД)
 // @namespace    https://github.com/LLAVQ/StatisticsITD
-// @version      1.1.1
+// @version      1.1.2
 // @description  Show account stats with interactive charts on итд.com profile pages
 // @author       LLAVQ
 // @license      GPL-3.0-or-later
@@ -17,7 +17,6 @@
 /*
     Statistics ITD
     Copyright (C) 2026 LLAVQ
-
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
@@ -32,28 +31,30 @@
     const PANEL_VISIBLE_KEY = 'StatisticsITD_panelVisible';
     const PANEL_POS_KEY = 'StatisticsITD_panelPos';
 
-    // --- Core Logic: Find the User ---
+    // --- Improved User Detection for итд.com ---
     function getUsername() {
         const path = location.pathname.replace(/^\/+|\/+$/g, '');
         const segments = path.split('/');
         
-        // 1. Check URL for @username or /profile/username
-        const userMatch = segments.find(s => s.startsWith('@'));
-        if (userMatch) return userMatch.slice(1);
+        // 1. Check for specific handle element on the page (most reliable for this site)
+        // Your screenshot shows the handle "@nowkie" under the name
+        const handleEl = document.querySelector('div[class*="handle"], span[class*="handle"], .text-gray-500');
+        if (handleEl && handleEl.innerText.startsWith('@')) {
+            return handleEl.innerText.replace('@', '').trim();
+        }
 
-        const profileIdx = segments.findIndex(s => s === 'profile' || s === 'user' || s === 'u');
-        if (profileIdx !== -1 && segments[profileIdx + 1]) return segments[profileIdx + 1];
+        // 2. Check URL segments
+        if (segments.length === 1 && segments[0] !== '' && !['home', 'explore', 'notifications', 'settings'].includes(segments[0])) {
+            return segments[0].replace('@', '');
+        }
 
-        // 2. Fallback: Search the DOM for a username handle
-        const headerHandle = document.querySelector('h1, h2, .username, [data-username]');
-        if (headerHandle && headerHandle.innerText.includes('@')) {
-            return headerHandle.innerText.split('@')[1].trim().split(' ')[0];
+        if (segments[0] === 'profile' && segments[1]) {
+            return segments[1].replace('@', '');
         }
 
         return null;
     }
 
-    // --- API Interactions ---
     async function api(path) {
         const r = await fetch(BASE + path, { 
             credentials: 'include', 
@@ -69,11 +70,12 @@
     }
 
     async function getPosts(username, limit = 50) {
-        const data = await api(`/api/posts/user/${encodeURIComponent(username)}?limit=${limit}&sort=new`);
-        return data?.posts ?? [];
+        try {
+            const data = await api(`/api/posts/user/${encodeURIComponent(username)}?limit=${limit}&sort=new`);
+            return data?.posts ?? [];
+        } catch (e) { return []; }
     }
 
-    // --- Storage & Snapshots ---
     function getSnapshots() {
         try { return JSON.parse(GM_getValue(STORAGE_KEY, "{}")); } catch { return {}; }
     }
@@ -87,10 +89,9 @@
             date: new Date().toISOString() 
         });
         GM_setValue(STORAGE_KEY, JSON.stringify(all));
-        alert('Snapshot saved! Growth percentages will appear on your next visit.');
+        alert('Snapshot saved!');
     }
 
-    // --- UI Rendering ---
     function aggregate(profile, posts) {
         let l = 0, v = 0, c = 0, r = 0;
         posts.forEach(p => {
@@ -109,19 +110,15 @@
         
         Object.assign(wrap.style, {
             position: 'fixed', left: pos.x + 'px', top: pos.y + 'px',
-            width: '350px', zIndex: '999999', background: '#111827', color: '#f3f4f6',
+            width: '320px', zIndex: '999999', background: '#111827', color: '#f3f4f6',
             borderRadius: '12px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
             border: '1px solid #374151', fontFamily: 'system-ui, sans-serif',
             display: GM_getValue(PANEL_VISIBLE_KEY, true) ? 'block' : 'none'
         });
 
         const header = document.createElement('div');
-        header.innerHTML = `<div style="padding:12px; cursor:move; background:#1f2937; border-radius:12px 12px 0 0; font-weight:bold; display:flex; justify-content:space-between">
-            <span>📈 Statistics ITD</span>
-            <span id="itdClose" style="cursor:pointer; opacity:0.5">×</span>
-        </div>`;
+        header.innerHTML = `<div style="padding:10px; cursor:move; background:#1f2937; border-radius:12px 12px 0 0; font-weight:bold; font-size:14px">📈 Statistics ITD</div>`;
 
-        // Drag Handler
         header.onmousedown = (e) => {
             let sx = e.clientX - wrap.getBoundingClientRect().left;
             let sy = e.clientY - wrap.getBoundingClientRect().top;
@@ -138,18 +135,17 @@
         };
 
         const body = document.createElement('div');
-        body.style.padding = '15px';
+        body.style.padding = '12px';
         wrap.appendChild(header);
         wrap.appendChild(body);
         document.body.appendChild(wrap);
 
-        // Toggle Button
         const toggle = document.createElement('button');
         toggle.innerHTML = '📊';
         Object.assign(toggle.style, {
             position: 'fixed', bottom: '20px', right: '20px', zIndex: '1000000',
-            width: '48px', height: '48px', borderRadius: '50%', border: 'none',
-            background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '20px'
+            width: '40px', height: '40px', borderRadius: '50%', border: 'none',
+            background: '#2563eb', color: 'white', cursor: 'pointer'
         });
         toggle.onclick = () => {
             const isVisible = wrap.style.display !== 'none';
@@ -162,7 +158,7 @@
     }
 
     async function load(username, container) {
-        container.innerHTML = '<div style="color:#9ca3af">Fetching data for @'+username+'...</div>';
+        container.innerHTML = '<div style="font-size:13px; color:#9ca3af">Loading @'+username+'...</div>';
         try {
             const [profile, posts] = await Promise.all([getProfile(username), getPosts(username)]);
             const stats = aggregate(profile, posts);
@@ -173,42 +169,38 @@
             if (last) {
                 const diff = stats.profile.followersCount - last.followersCount;
                 const color = diff >= 0 ? '#10b981' : '#ef4444';
-                growthHtml = `<span style="color:${color}; font-size:11px; margin-left:8px">${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}</span>`;
+                growthHtml = `<span style="color:${color}; font-size:11px"> (${diff >= 0 ? '+' : ''}${diff})</span>`;
             }
 
             container.innerHTML = `
-                <div style="margin-bottom:15px">
-                    <div style="font-size:18px; font-weight:bold; color:#60a5fa">@${username}</div>
-                    <div style="font-size:13px; color:#9ca3af">Followers: ${profile.followersCount.toLocaleString()}${growthHtml}</div>
+                <div style="margin-bottom:12px">
+                    <div style="font-size:16px; font-weight:bold; color:#60a5fa">@${username}</div>
+                    <div style="font-size:12px; color:#9ca3af">Followers: ${profile.followersCount.toLocaleString()}${growthHtml}</div>
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:15px">
-                    <div style="background:#1f2937; padding:10px; border-radius:8px; border:1px solid #374151">
-                        <div style="font-size:11px; color:#9ca3af; text-transform:uppercase">Avg Views</div>
-                        <div style="font-size:16px; font-weight:bold">${Math.round(stats.totalViews / (stats.postCount || 1)).toLocaleString()}</div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:12px">
+                    <div style="background:#1f2937; padding:8px; border-radius:6px; border:1px solid #374151">
+                        <div style="font-size:10px; color:#9ca3af">AVG VIEWS</div>
+                        <div style="font-size:14px; font-weight:bold">${Math.round(stats.totalViews / (stats.postCount || 1)).toLocaleString()}</div>
                     </div>
-                    <div style="background:#1f2937; padding:10px; border-radius:8px; border:1px solid #374151">
-                        <div style="font-size:11px; color:#9ca3af; text-transform:uppercase">Eng. Rate</div>
-                        <div style="font-size:16px; font-weight:bold; color:#10b981">${stats.engagementRate}</div>
+                    <div style="background:#1f2937; padding:8px; border-radius:6px; border:1px solid #374151">
+                        <div style="font-size:10px; color:#9ca3af">ENGAGEMENT</div>
+                        <div style="font-size:14px; font-weight:bold; color:#10b981">${stats.engagementRate}</div>
                     </div>
                 </div>
-                <div style="font-size:12px; color:#9ca3af; margin-bottom:5px">Sample: Last ${stats.postCount} posts</div>
-                <div style="background:#1f2937; padding:10px; border-radius:8px; font-size:13px">
+                <div style="background:#1f2937; padding:8px; border-radius:6px; font-size:12px">
                     <div style="display:flex; justify-content:space-between; margin-bottom:4px"><span>Likes:</span> <b>${stats.totalLikes.toLocaleString()}</b></div>
-                    <div style="display:flex; justify-content:space-between; margin-bottom:4px"><span>Views:</span> <b>${stats.totalViews.toLocaleString()}</b></div>
-                    <div style="display:flex; justify-content:space-between"><span>Comments:</span> <b>${stats.totalComments.toLocaleString()}</b></div>
+                    <div style="display:flex; justify-content:space-between"><span>Views:</span> <b>${stats.totalViews.toLocaleString()}</b></div>
                 </div>
-                <button id="itdSnapBtn" style="width:100%; margin-top:15px; padding:10px; background:#2563eb; border:none; color:white; border-radius:6px; cursor:pointer; font-weight:600">Save Snapshot</button>
+                <button id="itdSnapBtn" style="width:100%; margin-top:10px; padding:8px; background:#2563eb; border:none; color:white; border-radius:6px; cursor:pointer; font-size:12px; font-weight:600">Save Snapshot</button>
             `;
 
             document.getElementById('itdSnapBtn').onclick = () => saveSnapshot(username, stats);
 
         } catch (e) {
-            console.error(e);
-            container.innerHTML = `<div style="color:#ef4444; font-size:13px">Error loading stats. User may be private or API is down.</div>`;
+            container.innerHTML = `<div style="color:#ef4444; font-size:12px">Error: Profile data hidden or API error.</div>`;
         }
     }
 
-    // --- Init & Watcher ---
     const body = createUI();
     let currentLoadedUser = null;
 
@@ -217,14 +209,13 @@
         if (user && user !== currentLoadedUser) {
             currentLoadedUser = user;
             load(user, body);
-        } else if (!user) {
+        } else if (!user && currentLoadedUser !== null) {
             currentLoadedUser = null;
-            body.innerHTML = '<div style="color:#9ca3af; text-align:center; padding:20px">Visit a profile to see statistics.</div>';
+            body.innerHTML = '<div style="font-size:12px; color:#9ca3af; text-align:center">Navigate to a profile to see stats.</div>';
         }
     }
 
-    // Check every 2 seconds for navigation changes (SPA)
-    setInterval(check, 2000);
+    setInterval(check, 1500); // Check faster
     check();
 
 })();
